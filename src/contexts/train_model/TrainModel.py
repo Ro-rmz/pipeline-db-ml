@@ -1,34 +1,31 @@
-import numpy as np
 import joblib
 import pandas as pd
 import psycopg2
 import os
 from dotenv import load_dotenv
 
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.tree import DecisionTreeClassifier
 
-from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error, r2_score
 
 class TrainModel:
 
     def entrenarModelo():
 
-        #se usaron las credeciales para ingresar de manera ocacional (Transaction pooler)
         load_dotenv("/app/.env")
         USER = os.getenv("SUPABASE_USER")
         PASSWORD = os.getenv("SUPABASE_PASSWORD")
         HOST = os.getenv("SUPABASE_HOST")
         PORT = os.getenv("SUPABASE_PORT")
         DBNAME = os.getenv("SUPABASE_DBNAME")
-        
 
-        if(PORT== None):
+        if PORT is None:
             print("no se lee el env")
             return
         else:
             print("si se lee en env")
-
 
         try:
             with psycopg2.connect(
@@ -39,37 +36,44 @@ class TrainModel:
                 dbname=DBNAME
             ) as connection:
                 with connection.cursor() as cursor:
-                    # Consulta SQL
-                    cursor.execute('SELECT x, y FROM "Dataset";')
-                    rows = cursor.fetchall()  # devuelve una lista de tuplas [(x1,y1),(x2,y2),...]
-                    
+                    cursor.execute(
+                        'SELECT tipo_correo, pais, ciudad, genero FROM vista_genero_cliente;'
+                    )
+                    rows = cursor.fetchall()
                     print(f"Filas recuperadas: {len(rows)}")
 
         except Exception as e:
             print(f"Error al conectar o recuperar datos: {e}")
             return
-        
+
         if not rows:
             print("No se recuperaron filas de la base de datos. Abortando entrenamiento.")
             return
         else:
             print(rows[:2])
-            
 
-        # Convertir la lista de tuplas a un array de NumPy
-        data_array = np.array(rows)  # shape (num_filas, 2)
+        # Pasar los datos a un DataFrame
+        df = pd.DataFrame(rows, columns=["tipo_correo", "pais", "ciudad", "genero"])
 
-        # Separar columnas
-        x = data_array[:, 0].reshape(-1, 1)  # 100 x 1
-        y = data_array[:, 1].reshape(-1, 1)  # 100 x 1
+        # X = lo que uso para predecir | y = lo que quiero predecir
+        X = df[["tipo_correo", "pais", "ciudad"]]
+        y = df["genero"]
 
-        #dividir en entranamiento y prueba
-        x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42)
-        
-        #entrenar el modelo
-        
-        model = LinearRegression()
-        model.fit(x_train, y_train)
-        joblib.dump(model, str(os.getenv("MODELO_ENTRENADO")))
+        # Como son texto, hay que convertirlas a numeros con OneHotEncoder
+        preprocesador = ColumnTransformer(
+            transformers=[
+                ("cat", OneHotEncoder(handle_unknown="ignore"),
+                 ["tipo_correo", "pais", "ciudad"])
+            ]
+        )
+
+        modelo = Pipeline(steps=[
+            ("preprocesador", preprocesador),
+            ("clasificador", DecisionTreeClassifier(random_state=42)),
+        ])
+
+        # Con pocos datos, entrenamos con todo el set
+        modelo.fit(X, y)
+
+        joblib.dump(modelo, str(os.getenv("MODELO_ENTRENADO")))
         print("modelo entrenado")
-        
